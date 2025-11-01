@@ -1,8 +1,10 @@
-import { getFoods } from "./storage";
 import {
-  scheduleNotifications as scheduleSWNotifications,
-  showTestNotification,
-} from "./serviceWorker";
+  subscribeToPush,
+  updateNotificationSchedule,
+  sendTestNotification,
+  isPushSupported,
+  getCurrentSubscription,
+} from "./pushNotifications";
 
 export const requestNotificationPermission = async (): Promise<boolean> => {
   if (!("Notification" in window)) {
@@ -22,32 +24,45 @@ export const requestNotificationPermission = async (): Promise<boolean> => {
   return false;
 };
 
-export const scheduleNotifications = async (times: string[]): Promise<void> => {
-  // Get recent foods function
-  const getRecentFoods = () => {
-    return getFoods()
-      .sort((a, b) => {
-        const aTime = a.lastUsed ? new Date(a.lastUsed).getTime() : 0;
-        const bTime = b.lastUsed ? new Date(b.lastUsed).getTime() : 0;
-        return bTime - aTime;
-      })
-      .slice(0, 5);
-  };
+export const enablePushNotifications = async (): Promise<boolean> => {
+  if (!isPushSupported()) {
+    console.error("Push notifications are not supported");
+    return false;
+  }
 
-  // Schedule notifications via service worker
-  await scheduleSWNotifications(times, getRecentFoods);
+  // Request notification permission first
+  const hasPermission = await requestNotificationPermission();
+  if (!hasPermission) {
+    return false;
+  }
+
+  // Subscribe to push
+  const subscription = await subscribeToPush();
+  return subscription !== null;
+};
+
+export const scheduleNotifications = async (times: string[]): Promise<void> => {
+  // Check if already subscribed
+  const existingSubscription = await getCurrentSubscription();
+  
+  if (!existingSubscription) {
+    // Subscribe first
+    const subscribed = await enablePushNotifications();
+    if (!subscribed) {
+      throw new Error("Failed to subscribe to push notifications");
+    }
+  }
+
+  // Update schedule on server
+  const success = await updateNotificationSchedule(times);
+  if (!success) {
+    throw new Error("Failed to update notification schedule");
+  }
 };
 
 export const testNotification = async (): Promise<void> => {
-  const getRecentFoods = () => {
-    return getFoods()
-      .sort((a, b) => {
-        const aTime = a.lastUsed ? new Date(a.lastUsed).getTime() : 0;
-        const bTime = b.lastUsed ? new Date(b.lastUsed).getTime() : 0;
-        return bTime - aTime;
-      })
-      .slice(0, 5);
-  };
-
-  await showTestNotification(getRecentFoods);
+  const success = await sendTestNotification();
+  if (!success) {
+    throw new Error("Failed to send test notification");
+  }
 };

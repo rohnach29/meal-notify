@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { getPreferences, savePreferences } from "@/lib/storage";
-import { requestNotificationPermission, scheduleNotifications, testNotification } from "@/lib/notifications";
+import { requestNotificationPermission, enablePushNotifications, scheduleNotifications, testNotification } from "@/lib/notifications";
 import { UserPreferences } from "@/types";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -39,23 +39,29 @@ const Settings = () => {
   };
 
   const handleEnableNotifications = async () => {
-    const granted = await requestNotificationPermission();
-    if (granted) {
-      setNotificationPermission("granted");
-      const updatedPrefs = { ...prefs, notificationsEnabled: true };
-      setPrefs(updatedPrefs);
-      savePreferences(updatedPrefs);
-      
-      // Schedule notifications immediately
-      try {
-        await scheduleNotifications(updatedPrefs.notificationTimes);
-        toast.success("Notifications enabled and scheduled!");
-      } catch (error) {
-        console.error("Failed to schedule notifications:", error);
-        toast.success("Notifications enabled");
+    try {
+      // Enable push notifications (this requests permission and subscribes)
+      const enabled = await enablePushNotifications();
+      if (enabled) {
+        setNotificationPermission("granted");
+        const updatedPrefs = { ...prefs, notificationsEnabled: true };
+        setPrefs(updatedPrefs);
+        savePreferences(updatedPrefs);
+        
+        // Schedule notifications immediately
+        try {
+          await scheduleNotifications(updatedPrefs.notificationTimes);
+          toast.success("Notifications enabled and scheduled!");
+        } catch (error) {
+          console.error("Failed to schedule notifications:", error);
+          toast.success("Notifications enabled");
+        }
+      } else {
+        toast.error("Failed to enable push notifications");
       }
-    } else {
-      toast.error("Notification permission denied");
+    } catch (error) {
+      console.error("Error enabling notifications:", error);
+      toast.error("Failed to enable notifications. Make sure the backend server is running.");
     }
   };
 

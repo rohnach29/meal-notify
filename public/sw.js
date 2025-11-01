@@ -88,6 +88,31 @@ self.addEventListener('notificationclick', (event) => {
   }
 });
 
+// Push event handler (for Web Push notifications from server)
+self.addEventListener('push', (event) => {
+  let notificationData = {
+    title: 'Meal Reminder 🍽️',
+    body: 'Time to log your meal!',
+    foods: [],
+  };
+
+  if (event.data) {
+    try {
+      notificationData = JSON.parse(event.data.text());
+    } catch (e) {
+      console.error('Failed to parse push data:', e);
+    }
+  }
+
+  event.waitUntil(
+    showNotificationWithActions(
+      notificationData.foods || [],
+      notificationData.title,
+      notificationData.body
+    )
+  );
+});
+
 // Message handler from main app
 self.addEventListener('message', (event) => {
   if (event.data && event.data.type === 'SHOW_NOTIFICATION') {
