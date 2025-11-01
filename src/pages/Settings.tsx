@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { getPreferences, savePreferences } from "@/lib/storage";
-import { requestNotificationPermission } from "@/lib/notifications";
+import { requestNotificationPermission, scheduleNotifications, testNotification } from "@/lib/notifications";
 import { UserPreferences } from "@/types";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -21,19 +21,56 @@ const Settings = () => {
     }
   }, []);
 
-  const handleSave = () => {
+  const handleSave = async () => {
     savePreferences(prefs);
-    toast.success("Settings saved");
+    
+    // Schedule notifications if enabled
+    if (prefs.notificationsEnabled && notificationPermission === "granted") {
+      try {
+        await scheduleNotifications(prefs.notificationTimes);
+        toast.success("Settings saved and notifications scheduled!");
+      } catch (error) {
+        console.error("Failed to schedule notifications:", error);
+        toast.error("Settings saved, but failed to schedule notifications");
+      }
+    } else {
+      toast.success("Settings saved");
+    }
   };
 
   const handleEnableNotifications = async () => {
     const granted = await requestNotificationPermission();
     if (granted) {
       setNotificationPermission("granted");
-      setPrefs({ ...prefs, notificationsEnabled: true });
-      toast.success("Notifications enabled");
+      const updatedPrefs = { ...prefs, notificationsEnabled: true };
+      setPrefs(updatedPrefs);
+      savePreferences(updatedPrefs);
+      
+      // Schedule notifications immediately
+      try {
+        await scheduleNotifications(updatedPrefs.notificationTimes);
+        toast.success("Notifications enabled and scheduled!");
+      } catch (error) {
+        console.error("Failed to schedule notifications:", error);
+        toast.success("Notifications enabled");
+      }
     } else {
       toast.error("Notification permission denied");
+    }
+  };
+
+  const handleTestNotification = async () => {
+    if (notificationPermission !== "granted") {
+      toast.error("Please enable notifications first");
+      return;
+    }
+    
+    try {
+      await testNotification();
+      toast.success("Test notification sent!");
+    } catch (error) {
+      console.error("Failed to send test notification:", error);
+      toast.error("Failed to send test notification");
     }
   };
 
@@ -104,9 +141,18 @@ const Settings = () => {
               </Button>
             )}
             {notificationPermission === "granted" && (
-              <div className="text-sm text-success flex items-center gap-2">
-                <div className="w-2 h-2 rounded-full bg-success"></div>
-                Notifications enabled
+              <div className="space-y-3">
+                <div className="text-sm text-success flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full bg-success"></div>
+                  Notifications enabled
+                </div>
+                <Button
+                  onClick={handleTestNotification}
+                  variant="outline"
+                  className="w-full"
+                >
+                  Test Notification
+                </Button>
               </div>
             )}
           </Card>
