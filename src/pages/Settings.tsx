@@ -61,7 +61,16 @@ const Settings = () => {
       }
     } catch (error) {
       console.error("Error enabling notifications:", error);
-      toast.error("Failed to enable notifications. Make sure the backend server is running.");
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      
+      // Provide more specific error messages
+      if (errorMessage.includes("VAPID") || errorMessage.includes("backend") || errorMessage.includes("fetch")) {
+        toast.error(`Backend connection failed: ${errorMessage}. Check if backend is running and VITE_API_URL is correct.`);
+      } else if (errorMessage.includes("permission")) {
+        toast.error("Notification permission was denied. Please enable it in iPhone Settings.");
+      } else {
+        toast.error(`Failed to enable notifications: ${errorMessage}`);
+      }
     }
   };
 

@@ -27,18 +27,23 @@ export const requestNotificationPermission = async (): Promise<boolean> => {
 export const enablePushNotifications = async (): Promise<boolean> => {
   if (!isPushSupported()) {
     console.error("Push notifications are not supported");
-    return false;
+    throw new Error("Push notifications are not supported in this browser");
   }
 
   // Request notification permission first
   const hasPermission = await requestNotificationPermission();
   if (!hasPermission) {
-    return false;
+    throw new Error("Notification permission was denied");
   }
 
   // Subscribe to push
-  const subscription = await subscribeToPush();
-  return subscription !== null;
+  try {
+    const subscription = await subscribeToPush();
+    return subscription !== null;
+  } catch (error) {
+    console.error("Push subscription error:", error);
+    throw error; // Re-throw to be caught by UI
+  }
 };
 
 export const scheduleNotifications = async (times: string[]): Promise<void> => {

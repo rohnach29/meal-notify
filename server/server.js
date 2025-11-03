@@ -8,7 +8,12 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Middleware
-app.use(cors());
+app.use(cors({
+  origin: true, // Allow all origins (for PWA)
+  credentials: true,
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
 app.use(express.json());
 
 // VAPID keys - set these as environment variables
@@ -166,35 +171,53 @@ app.post('/api/test-notification', async (req, res) => {
   }
 });
 
-// Send notifications for a specific time (called by cron at scheduled times)
-const sendNotificationsForTime = (targetTime) => {
+// Check and send notifications for current time (within 5-minute window)
+const checkAndSendNotifications = () => {
+  const now = new Date();
+  const currentHour = now.getHours();
+  const currentMinute = now.getMinutes();
+  
+  // Create time windows to check (current time ± 2 minutes for 5-minute interval)
+  const timeWindows = [
+    `${String(currentHour).padStart(2, '0')}:${String(currentMinute).padStart(2, '0')}`,
+  ];
+  
+  // Also check if we're within 2 minutes of any scheduled time
   subscriptions.forEach((subscription, userId) => {
     const userData = userSchedules.get(userId);
     if (!userData || !userData.notificationTimes) return;
 
-    // Check if user has this time scheduled
-    const hasTime = userData.notificationTimes.some(time => time === targetTime);
-    if (!hasTime) return;
-
     const foods = userData.foods || [];
     const foodsList = Array.isArray(foods) ? foods.slice(0, 5) : [];
 
-    const foodNames = foodsList.length > 0
-      ? foodsList.slice(0, 3).map(f => f.name).join(', ') + 
-        (foodsList.length > 3 ? ` +${foodsList.length - 3} more` : '')
-      : 'Time to log your meal! What did you eat?';
+    // Check each scheduled time
+    userData.notificationTimes.forEach((scheduledTime) => {
+      const [scheduledHour, scheduledMinute] = scheduledTime.split(':').map(Number);
+      const scheduledTotalMinutes = scheduledHour * 60 + scheduledMinute;
+      const currentTotalMinutes = currentHour * 60 + currentMinute;
+      
+      // Check if current time is within 2 minutes of scheduled time
+      const timeDiff = Math.abs(currentTotalMinutes - scheduledTotalMinutes);
+      
+      if (timeDiff <= 2 && timeDiff >= 0) {
+        const foodNames = foodsList.length > 0
+          ? foodsList.slice(0, 3).map(f => f.name).join(', ') + 
+            (foodsList.length > 3 ? ` +${foodsList.length - 3} more` : '')
+          : 'Time to log your meal! What did you eat?';
 
-    sendNotification(
-      subscription,
-      'Meal Reminder 🍽️',
-      `Quick log: ${foodNames}`,
-      foodsList
-    );
+        sendNotification(
+          subscription,
+          'Meal Reminder 🍽️',
+          `Quick log: ${foodNames}`,
+          foodsList
+        );
+      }
+    });
   });
 };
 
-// Cron endpoint - called by external cron service at specific times (e.g., 11:00, 15:00, 20:00)
-// Usage: /api/cron?time=11:00
+// Cron endpoint - called by external cron service every 5 minutes
+// Checks all users and sends notifications if their scheduled time matches (within 2-minute window)
 // For security, you can add CRON_SECRET env var and set it in your external cron service
 app.get('/api/cron', async (req, res) => {
   // Optional: Verify cron secret for security
@@ -203,48 +226,32 @@ app.get('/api/cron', async (req, res) => {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  // Get time from query parameter (e.g., ?time=11:00)
-  const targetTime = req.query.time;
-  
-  if (!targetTime) {
-    return res.status(400).json({ error: 'Time parameter required (e.g., ?time=11:00)' });
-  }
-
-  // Validate time format (HH:MM)
-  const timeRegex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
-  if (!timeRegex.test(targetTime)) {
-    return res.status(400).json({ error: 'Invalid time format. Use HH:MM (e.g., 11:00)' });
-  }
-
   try {
-    sendNotificationsForTime(targetTime);
+    checkAndSendNotifications();
+    const now = new Date();
     res.json({ 
       success: true, 
-      message: `Notifications sent for ${targetTime}`,
-      sentAt: new Date().toISOString(),
-      time: targetTime
+      message: 'Notifications checked',
+      checkedAt: now.toISOString(),
+      currentTime: `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
     });
   } catch (error) {
     console.error('Cron error:', error);
-    res.status(500).json({ error: 'Failed to send notifications' });
+    res.status(500).json({ error: 'Failed to check notifications' });
   }
 });
 
 // Start scheduler for local development only
-// Schedules cron jobs for default times (11:00, 15:00, 20:00)
-// In production, external cron service will call /api/cron?time=XX:XX at specific times
+// Runs every 5 minutes to check for scheduled notifications
+// In production, external cron service will call /api/cron every 5 minutes
 if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
   try {
-    // Schedule for default times
-    const defaultTimes = ['11:00', '15:00', '20:00'];
-    defaultTimes.forEach(time => {
-      const [hours, minutes] = time.split(':').map(Number);
-      cron.schedule(`${minutes} ${hours} * * *`, () => {
-        console.log(`Sending notifications for ${time}`);
-        sendNotificationsForTime(time);
-      });
+    // Run every 5 minutes
+    cron.schedule('*/5 * * * *', () => {
+      console.log('Checking for scheduled notifications...');
+      checkAndSendNotifications();
     });
-    console.log('Local cron scheduler started for:', defaultTimes.join(', '));
+    console.log('Local cron scheduler started (checks every 5 minutes)');
   } catch (error) {
     console.log('Cron not available, using endpoint-based scheduling');
   }

@@ -39,25 +39,37 @@ const urlBase64ToUint8Array = (base64String: string): Uint8Array => {
 export const subscribeToPush = async (): Promise<PushSubscription | null> => {
   if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
     console.error('Push notifications are not supported');
-    return null;
+    throw new Error('Push notifications are not supported in this browser');
   }
 
   try {
-    // Register service worker
+    // Register service worker first
     const registration = await navigator.serviceWorker.ready;
+    console.log('Service worker ready');
 
-    // Get VAPID public key
+    // Get VAPID public key from backend
+    console.log('Fetching VAPID key from:', `${API_URL}/api/vapid-key`);
     const publicKey = await getVapidKey();
+    
+    if (!publicKey) {
+      throw new Error('Failed to get VAPID public key from backend');
+    }
+    
+    console.log('VAPID key received');
     const applicationServerKey = urlBase64ToUint8Array(publicKey);
 
     // Subscribe to push
+    console.log('Subscribing to push manager...');
     subscription = await registration.pushManager.subscribe({
       userVisibleOnly: true,
       applicationServerKey: applicationServerKey,
     });
+    
+    console.log('Push subscription created:', subscription.endpoint.substring(0, 50) + '...');
 
     // Send subscription to server
-    await fetch(`${API_URL}/api/subscribe`, {
+    console.log('Sending subscription to backend:', `${API_URL}/api/subscribe`);
+    const response = await fetch(`${API_URL}/api/subscribe`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -65,11 +77,22 @@ export const subscribeToPush = async (): Promise<PushSubscription | null> => {
       body: JSON.stringify({ subscription }),
     });
 
-    console.log('Subscribed to push notifications');
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('Backend subscription failed:', response.status, errorText);
+      throw new Error(`Backend subscription failed: ${response.status} ${errorText}`);
+    }
+
+    const result = await response.json();
+    console.log('Subscribed to push notifications successfully:', result);
     return subscription;
   } catch (error) {
     console.error('Failed to subscribe:', error);
-    return null;
+    // Re-throw with more context
+    if (error instanceof Error) {
+      throw error;
+    }
+    throw new Error(`Push subscription failed: ${String(error)}`);
   }
 };
 
