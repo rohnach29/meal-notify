@@ -166,62 +166,85 @@ app.post('/api/test-notification', async (req, res) => {
   }
 });
 
-// Check and send scheduled notifications (called by cron job)
-const checkAndSendNotifications = () => {
-  const now = new Date();
-  const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-
+// Send notifications for a specific time (called by cron at scheduled times)
+const sendNotificationsForTime = (targetTime) => {
   subscriptions.forEach((subscription, userId) => {
     const userData = userSchedules.get(userId);
     if (!userData || !userData.notificationTimes) return;
 
+    // Check if user has this time scheduled
+    const hasTime = userData.notificationTimes.some(time => time === targetTime);
+    if (!hasTime) return;
+
     const foods = userData.foods || [];
     const foodsList = Array.isArray(foods) ? foods.slice(0, 5) : [];
 
-    // Check if current time matches any scheduled time
-    userData.notificationTimes.forEach((scheduledTime) => {
-      if (scheduledTime === currentTime) {
-        const foodNames = foodsList.length > 0
-          ? foodsList.slice(0, 3).map(f => f.name).join(', ') + 
-            (foodsList.length > 3 ? ` +${foodsList.length - 3} more` : '')
-          : 'Time to log your meal! What did you eat?';
+    const foodNames = foodsList.length > 0
+      ? foodsList.slice(0, 3).map(f => f.name).join(', ') + 
+        (foodsList.length > 3 ? ` +${foodsList.length - 3} more` : '')
+      : 'Time to log your meal! What did you eat?';
 
-        sendNotification(
-          subscription,
-          'Meal Reminder 🍽️',
-          `Quick log: ${foodNames}`,
-          foodsList
-        );
-      }
-    });
+    sendNotification(
+      subscription,
+      'Meal Reminder 🍽️',
+      `Quick log: ${foodNames}`,
+      foodsList
+    );
   });
 };
 
-// Cron endpoint for Vercel Cron Jobs (called every minute)
+// Cron endpoint - called by external cron service at specific times (e.g., 11:00, 15:00, 20:00)
+// Usage: /api/cron?time=11:00
+// For security, you can add CRON_SECRET env var and set it in your external cron service
 app.get('/api/cron', async (req, res) => {
-  // Verify cron secret (optional but recommended)
-  const cronSecret = req.headers['authorization'];
-  if (process.env.CRON_SECRET && cronSecret !== `Bearer ${process.env.CRON_SECRET}`) {
+  // Optional: Verify cron secret for security
+  const cronSecret = req.headers['authorization'] || req.query.secret;
+  if (process.env.CRON_SECRET && cronSecret !== `Bearer ${process.env.CRON_SECRET}` && cronSecret !== process.env.CRON_SECRET) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
+  // Get time from query parameter (e.g., ?time=11:00)
+  const targetTime = req.query.time;
+  
+  if (!targetTime) {
+    return res.status(400).json({ error: 'Time parameter required (e.g., ?time=11:00)' });
+  }
+
+  // Validate time format (HH:MM)
+  const timeRegex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
+  if (!timeRegex.test(targetTime)) {
+    return res.status(400).json({ error: 'Invalid time format. Use HH:MM (e.g., 11:00)' });
+  }
+
   try {
-    checkAndSendNotifications();
-    res.json({ success: true, message: 'Notifications checked' });
+    sendNotificationsForTime(targetTime);
+    res.json({ 
+      success: true, 
+      message: `Notifications sent for ${targetTime}`,
+      sentAt: new Date().toISOString(),
+      time: targetTime
+    });
   } catch (error) {
     console.error('Cron error:', error);
-    res.status(500).json({ error: 'Failed to check notifications' });
+    res.status(500).json({ error: 'Failed to send notifications' });
   }
 });
 
 // Start scheduler for local development only
-// Note: In production, Vercel Cron Jobs will call /api/cron endpoint
+// Schedules cron jobs for default times (11:00, 15:00, 20:00)
+// In production, external cron service will call /api/cron?time=XX:XX at specific times
 if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
   try {
-    cron.schedule('* * * * *', () => {
-      checkAndSendNotifications();
+    // Schedule for default times
+    const defaultTimes = ['11:00', '15:00', '20:00'];
+    defaultTimes.forEach(time => {
+      const [hours, minutes] = time.split(':').map(Number);
+      cron.schedule(`${minutes} ${hours} * * *`, () => {
+        console.log(`Sending notifications for ${time}`);
+        sendNotificationsForTime(time);
+      });
     });
-    console.log('Cron scheduler started for local development');
+    console.log('Local cron scheduler started for:', defaultTimes.join(', '));
   } catch (error) {
     console.log('Cron not available, using endpoint-based scheduling');
   }
