@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { getPreferences, savePreferences } from "@/lib/storage";
 import { requestNotificationPermission, enablePushNotifications, scheduleNotifications, testNotification } from "@/lib/notifications";
+import { isPushSupported, getCurrentSubscription } from "@/lib/pushNotifications";
 import { UserPreferences } from "@/types";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -176,6 +177,111 @@ const Settings = () => {
           <Button onClick={handleSave} className="w-full gradient-accent" size="lg">
             Save Settings
           </Button>
+
+          {/* Debug Info */}
+          <Card className="p-6 shadow-soft border-2 border-orange-200">
+            <div className="font-semibold mb-3 text-orange-600">🔍 Debug Info</div>
+            <div className="space-y-3 text-sm">
+              <div className="space-y-2">
+                <div className="font-medium">API URL:</div>
+                <div className="font-mono text-xs bg-muted p-2 rounded break-all">
+                  {import.meta.env.VITE_API_URL || 'http://localhost:3000 (DEFAULT)'}
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  {import.meta.env.VITE_API_URL 
+                    ? '✅ Environment variable set' 
+                    : '⚠️ Using default (localhost)'}
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <div className="font-medium">Push Support:</div>
+                <div className="text-xs">
+                  {isPushSupported() ? '✅ Supported' : '❌ Not supported'}
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <div className="font-medium">Service Worker:</div>
+                <div className="text-xs">
+                  {('serviceWorker' in navigator) ? '✅ Available' : '❌ Not available'}
+                </div>
+              </div>
+
+              <Button
+                onClick={async () => {
+                  const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+                  toast.info(`Testing: ${apiUrl}`);
+                  
+                  try {
+                    const response = await fetch(`${apiUrl}/api/vapid-key`);
+                    
+                    if (!response.ok) {
+                      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    }
+                    
+                    const data = await response.json();
+                    
+                    if (data.publicKey) {
+                      toast.success(`✅ Backend connected! URL: ${apiUrl}`);
+                    } else {
+                      toast.error(`❌ Invalid response from backend`);
+                    }
+                  } catch (error) {
+                    const errorMsg = error instanceof Error ? error.message : String(error);
+                    toast.error(`❌ Backend failed: ${errorMsg}`);
+                    console.error('Backend test error:', error);
+                  }
+                }}
+                variant="outline"
+                size="sm"
+                className="w-full"
+              >
+                Test Backend Connection
+              </Button>
+
+              <Button
+                onClick={async () => {
+                  try {
+                    const subscription = await getCurrentSubscription();
+                    if (subscription) {
+                      toast.success('✅ Push subscription active');
+                      console.log('Subscription:', subscription);
+                    } else {
+                      toast.info('ℹ️ No push subscription found');
+                    }
+                  } catch (error) {
+                    toast.error(`❌ Error checking subscription: ${error instanceof Error ? error.message : String(error)}`);
+                  }
+                }}
+                variant="outline"
+                size="sm"
+                className="w-full"
+              >
+                Check Push Subscription
+              </Button>
+
+              <Button
+                onClick={() => {
+                  const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+                  const details = {
+                    apiUrl,
+                    hasEnvVar: !!import.meta.env.VITE_API_URL,
+                    pushSupported: isPushSupported(),
+                    serviceWorkerSupported: 'serviceWorker' in navigator,
+                    notificationPermission: notificationPermission,
+                  };
+                  console.log('Debug Details:', details);
+                  toast.info('Debug info logged to console');
+                }}
+                variant="outline"
+                size="sm"
+                className="w-full"
+              >
+                Log All Debug Info to Console
+              </Button>
+            </div>
+          </Card>
 
           {/* App Info */}
           <Card className="p-6 shadow-soft">
