@@ -166,48 +166,78 @@ app.post('/api/test-notification', async (req, res) => {
   }
 });
 
-// Schedule daily notifications
-const scheduleNotifications = () => {
-  // Run every minute to check if it's time to send notifications
-  cron.schedule('* * * * *', () => {
-    const now = new Date();
-    const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+// Check and send scheduled notifications (called by cron job)
+const checkAndSendNotifications = () => {
+  const now = new Date();
+  const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
 
-    subscriptions.forEach((subscription, userId) => {
-      const userData = userSchedules.get(userId);
-      if (!userData || !userData.notificationTimes) return;
+  subscriptions.forEach((subscription, userId) => {
+    const userData = userSchedules.get(userId);
+    if (!userData || !userData.notificationTimes) return;
 
-      const foods = userData.foods || [];
-      const foodsList = Array.isArray(foods) ? foods.slice(0, 5) : [];
+    const foods = userData.foods || [];
+    const foodsList = Array.isArray(foods) ? foods.slice(0, 5) : [];
 
-      // Check if current time matches any scheduled time
-      userData.notificationTimes.forEach((scheduledTime) => {
-        if (scheduledTime === currentTime) {
-          const foodNames = foodsList.length > 0
-            ? foodsList.slice(0, 3).map(f => f.name).join(', ') + 
-              (foodsList.length > 3 ? ` +${foodsList.length - 3} more` : '')
-            : 'Time to log your meal! What did you eat?';
+    // Check if current time matches any scheduled time
+    userData.notificationTimes.forEach((scheduledTime) => {
+      if (scheduledTime === currentTime) {
+        const foodNames = foodsList.length > 0
+          ? foodsList.slice(0, 3).map(f => f.name).join(', ') + 
+            (foodsList.length > 3 ? ` +${foodsList.length - 3} more` : '')
+          : 'Time to log your meal! What did you eat?';
 
-          sendNotification(
-            subscription,
-            'Meal Reminder 🍽️',
-            `Quick log: ${foodNames}`,
-            foodsList
-          );
-        }
-      });
+        sendNotification(
+          subscription,
+          'Meal Reminder 🍽️',
+          `Quick log: ${foodNames}`,
+          foodsList
+        );
+      }
     });
   });
 };
 
-// Start scheduler
-scheduleNotifications();
+// Cron endpoint for Vercel Cron Jobs (called every minute)
+app.get('/api/cron', async (req, res) => {
+  // Verify cron secret (optional but recommended)
+  const cronSecret = req.headers['authorization'];
+  if (process.env.CRON_SECRET && cronSecret !== `Bearer ${process.env.CRON_SECRET}`) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
 
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-  console.log(`VAPID Public Key: ${VAPID_PUBLIC_KEY.substring(0, 20)}...`);
-  if (VAPID_PUBLIC_KEY === 'YOUR_PUBLIC_KEY') {
-    console.warn('⚠️  Warning: Using default VAPID keys. Generate new keys with: npm run generate-keys');
+  try {
+    checkAndSendNotifications();
+    res.json({ success: true, message: 'Notifications checked' });
+  } catch (error) {
+    console.error('Cron error:', error);
+    res.status(500).json({ error: 'Failed to check notifications' });
   }
 });
+
+// Start scheduler for local development only
+// Note: In production, Vercel Cron Jobs will call /api/cron endpoint
+if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
+  try {
+    cron.schedule('* * * * *', () => {
+      checkAndSendNotifications();
+    });
+    console.log('Cron scheduler started for local development');
+  } catch (error) {
+    console.log('Cron not available, using endpoint-based scheduling');
+  }
+}
+
+// Export for Vercel serverless
+export default app;
+
+// Start server for local development
+if (process.env.NODE_ENV !== 'production') {
+  app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+    console.log(`VAPID Public Key: ${VAPID_PUBLIC_KEY.substring(0, 20)}...`);
+    if (VAPID_PUBLIC_KEY === 'YOUR_PUBLIC_KEY') {
+      console.warn('⚠️  Warning: Using default VAPID keys. Generate new keys with: npm run generate-keys');
+    }
+  });
+}
 
