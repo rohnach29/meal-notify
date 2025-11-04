@@ -69,23 +69,53 @@ export const subscribeToPush = async (): Promise<PushSubscription | null> => {
 
     // Send subscription to server
     console.log('Sending subscription to backend:', `${API_URL}/api/subscribe`);
-    const response = await fetch(`${API_URL}/api/subscribe`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ subscription }),
-    });
+    
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+    
+    try {
+      const response = await fetch(`${API_URL}/api/subscribe`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ subscription }),
+        signal: controller.signal,
+      });
+      
+      clearTimeout(timeoutId);
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('Backend subscription failed:', response.status, errorText);
-      throw new Error(`Backend subscription failed: ${response.status} ${errorText}`);
+      if (!response.ok) {
+        const errorText = await response.text();
+        let errorMessage = `Backend subscription failed: ${response.status}`;
+        try {
+          const errorData = JSON.parse(errorText);
+          errorMessage += ` - ${errorData.error || errorData.details || errorText}`;
+        } catch {
+          errorMessage += ` - ${errorText}`;
+        }
+        console.error('Backend subscription failed:', response.status, errorText);
+        throw new Error(errorMessage);
+      }
+
+      const result = await response.json();
+      console.log('Subscribed to push notifications successfully:', result);
+      return subscription;
+    } catch (error) {
+      clearTimeout(timeoutId);
+      
+      if (error.name === 'AbortError') {
+        console.error('Request timed out');
+        throw new Error('Request timed out - backend may be slow or unreachable');
+      }
+      
+      console.error('Failed to send subscription to backend:', error);
+      // Re-throw with more context
+      if (error instanceof Error) {
+        throw error;
+      }
+      throw new Error(`Failed to subscribe: ${String(error)}`);
     }
-
-    const result = await response.json();
-    console.log('Subscribed to push notifications successfully:', result);
-    return subscription;
   } catch (error) {
     console.error('Failed to subscribe:', error);
     // Re-throw with more context

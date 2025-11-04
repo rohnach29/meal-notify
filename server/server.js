@@ -98,21 +98,36 @@ app.get('/api/vapid-key', (req, res) => {
 
 // Subscribe to push notifications
 app.post('/api/subscribe', async (req, res) => {
-  const subscription = req.body.subscription;
-  const userId = getUserId(subscription);
-  
-  if (!subscription) {
-    return res.status(400).json({ error: 'Subscription required' });
-  }
-
-  subscriptions.set(userId, subscription);
-  
-  // Send a test notification
   try {
-    await sendNotification(subscription, 'Welcome!', 'Notifications enabled. You will receive meal reminders at your scheduled times.');
+    const subscription = req.body.subscription;
+    
+    if (!subscription) {
+      return res.status(400).json({ error: 'Subscription required' });
+    }
+    
+    const userId = getUserId(subscription);
+    
+    // Save subscription first (critical step)
+    subscriptions.set(userId, subscription);
+    console.log('Subscription saved for user:', userId.substring(0, 20) + '...');
+    
+    // Send test notification asynchronously (don't block on it)
+    // On iOS, this might fail initially, but subscription is still valid
+    sendNotification(
+      subscription, 
+      'Welcome!', 
+      'Notifications enabled. You will receive meal reminders at your scheduled times.'
+    ).catch(err => {
+      console.log('Test notification failed (non-blocking):', err.message);
+      // Don't fail the subscription if test notification fails
+      // Subscription is still valid and will work for scheduled notifications
+    });
+    
+    // Return success immediately - subscription is saved
     res.json({ success: true, message: 'Subscribed successfully' });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to send test notification' });
+    console.error('Subscribe error:', error);
+    res.status(500).json({ error: 'Failed to subscribe', details: error.message });
   }
 });
 

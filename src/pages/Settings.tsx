@@ -41,8 +41,16 @@ const Settings = () => {
 
   const handleEnableNotifications = async () => {
     try {
+      console.log('=== Starting notification enable process ===');
+      console.log('API URL:', import.meta.env.VITE_API_URL || 'http://localhost:3000');
+      console.log('Push supported:', isPushSupported());
+      console.log('Service worker:', 'serviceWorker' in navigator);
+      
       // Enable push notifications (this requests permission and subscribes)
       const enabled = await enablePushNotifications();
+      
+      console.log('enablePushNotifications returned:', enabled);
+      
       if (enabled) {
         setNotificationPermission("granted");
         const updatedPrefs = { ...prefs, notificationsEnabled: true };
@@ -61,11 +69,18 @@ const Settings = () => {
         toast.error("Failed to enable push notifications");
       }
     } catch (error) {
-      console.error("Error enabling notifications:", error);
+      console.error("=== Error enabling notifications ===");
+      console.error("Full error:", error);
+      console.error("Error name:", error instanceof Error ? error.name : 'unknown');
+      console.error("Error message:", error instanceof Error ? error.message : String(error));
+      console.error("Error stack:", error instanceof Error ? error.stack : 'no stack');
+      
       const errorMessage = error instanceof Error ? error.message : String(error);
       
       // Provide more specific error messages
-      if (errorMessage.includes("VAPID") || errorMessage.includes("backend") || errorMessage.includes("fetch")) {
+      if (errorMessage.includes("timeout") || errorMessage.includes("timed out")) {
+        toast.error("Connection timed out. Check your internet connection and try again.");
+      } else if (errorMessage.includes("VAPID") || errorMessage.includes("backend") || errorMessage.includes("fetch")) {
         toast.error(`Backend connection failed: ${errorMessage}. Check if backend is running and VITE_API_URL is correct.`);
       } else if (errorMessage.includes("permission")) {
         toast.error("Notification permission was denied. Please enable it in iPhone Settings.");
