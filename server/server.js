@@ -263,7 +263,8 @@ app.post('/api/test-notification', async (req, res) => {
   }
 });
 
-// Check and send notifications for current time (within 5-minute window)
+// Check and send notifications for current time (exact match)
+// Cron runs every minute, so we check for exact time matches only
 // Returns detailed diagnostics in the response instead of just console.log
 const checkAndSendNotifications = async () => {
   const now = new Date();
@@ -334,7 +335,7 @@ const checkAndSendNotifications = async () => {
     const foods = userData.foods || [];
     const foodsList = Array.isArray(foods) ? foods.slice(0, 5) : [];
 
-    // Check each scheduled time
+    // Check each scheduled time - exact match only (cron runs every minute)
     for (const scheduledTime of userData.notificationTimes) {
       diagnostics.summary.schedulesChecked++;
       const [scheduledHour, scheduledMinute] = scheduledTime.split(':').map(Number);
@@ -350,12 +351,13 @@ const checkAndSendNotifications = async () => {
         scheduledMinutes: scheduledTotalMinutes,
         currentMinutes: currentTotalMinutes,
         timeDiff,
-        matches: timeDiff <= 2 && timeDiff >= 0
+        matches: timeDiff === 0  // Exact match only (cron runs every minute)
       };
       
       subDiagnostic.timeChecks.push(timeCheck);
       
-      if (timeDiff <= 2 && timeDiff >= 0) {
+      // Exact match only - no time window needed since cron runs every minute
+      if (timeDiff === 0) {
         diagnostics.summary.timeMatches++;
         diagnostics.summary.notificationsAttempted++;
         
@@ -436,8 +438,8 @@ app.get('/api/debug', (req, res) => {
   });
 });
 
-// Cron endpoint - called by external cron service every 5 minutes
-// Checks all users and sends notifications if their scheduled time matches (within 2-minute window)
+// Cron endpoint - called by external cron service every minute
+// Checks all users and sends notifications if their scheduled time matches exactly
 // Returns detailed diagnostics in the response for debugging
 // For security, you can add CRON_SECRET env var and set it in your external cron service
 app.get('/api/cron', async (req, res) => {
@@ -465,16 +467,16 @@ app.get('/api/cron', async (req, res) => {
 });
 
 // Start scheduler for local development only
-// Runs every 5 minutes to check for scheduled notifications
-// In production, external cron service will call /api/cron every 5 minutes
+// Runs every minute to check for scheduled notifications
+// In production, external cron service will call /api/cron every minute
 if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
   try {
-    // Run every 5 minutes
-    cron.schedule('*/5 * * * *', () => {
+    // Run every minute
+    cron.schedule('* * * * *', () => {
       console.log('Checking for scheduled notifications...');
       checkAndSendNotifications();
     });
-    console.log('Local cron scheduler started (checks every 5 minutes)');
+    console.log('Local cron scheduler started (checks every minute)');
   } catch (error) {
     console.log('Cron not available, using endpoint-based scheduling');
   }

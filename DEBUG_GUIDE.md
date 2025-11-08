@@ -160,18 +160,18 @@ curl https://meal-notify-backend.vercel.app/api/debug | jq '.schedules[0].userId
 - But `timeMatches: 0` in cron
 
 **Possible causes:**
-- Current time is not within 2 minutes of scheduled time
+- Current time does not exactly match scheduled time (cron runs every minute, so exact match required)
 - Cron is not running at the right time
 
 **How to check:**
 - Look at `[CRON]` logs - they show the time difference
-- Check if cron is running every 5 minutes
+- Check if cron is running every minute
 - Check if your scheduled time is correct
 
 **Solution:**
-- Set a test time 2 minutes from now
-- Call `/api/cron` manually at that time
-- Check if it matches
+- Set a test time 1 minute from now
+- Call `/api/cron` manually at that exact time
+- Check if it matches (timeDiff should be 0)
 
 ### Issue 5: Serverless function restarts
 
@@ -211,12 +211,12 @@ curl https://meal-notify-backend.vercel.app/api/debug | jq '.schedules[0].userId
 
 ### When cron runs:
 
-1. External service calls `/api/cron` every 5 minutes
+1. External service calls `/api/cron` every minute
 2. Backend calls `checkAndSendNotifications()`
 3. Backend logs: `[CRON] Total subscriptions in memory: X`
 4. Backend loops through each subscription
 5. For each subscription, checks if schedule exists (same userId)
-6. For each schedule, checks if current time matches (within 2 minutes)
+6. For each schedule, checks if current time matches exactly (timeDiff === 0)
 7. If match, sends notification
 8. Returns statistics
 

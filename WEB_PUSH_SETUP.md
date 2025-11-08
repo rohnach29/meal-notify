@@ -139,8 +139,8 @@ Make sure to:
 1. **User Subscribes:** Frontend subscribes to push notifications using VAPID keys
 2. **Subscription Sent:** Subscription sent to backend server
 3. **Backend Stores:** Backend stores subscription and notification schedule
-4. **Cron Job:** Backend runs a cron job every minute
-5. **Check Time:** When scheduled time matches, backend sends push notification
+4. **Cron Job:** External cron service calls `/api/cron` every minute
+5. **Check Time:** When scheduled time matches exactly (timeDiff === 0), backend sends push notification
 6. **iOS Receives:** iOS receives notification via APNs (automatically handled)
 7. **User Sees:** Notification appears on lock screen with action buttons
 
