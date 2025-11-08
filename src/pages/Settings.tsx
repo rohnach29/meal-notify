@@ -226,26 +226,35 @@ const Settings = () => {
               <Button
                 onClick={async () => {
                   const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000';
-                  toast.info(`Testing: ${apiUrl}`);
+                  const cleanUrl = apiUrl.replace(/\/+$/, ''); // Remove trailing slashes
+                  const testUrl = `${cleanUrl}/api/vapid-key`;
+                  
+                  toast.info(`Testing: ${testUrl}`);
                   
                   try {
-                    const response = await fetch(`${apiUrl}/api/vapid-key`);
+                    const response = await fetch(testUrl, {
+                      method: 'GET',
+                      credentials: 'include',
+                    });
                     
                     if (!response.ok) {
-                      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                      const errorText = await response.text();
+                      throw new Error(`HTTP ${response.status}: ${response.statusText} - ${errorText}`);
                     }
                     
                     const data = await response.json();
                     
                     if (data.publicKey) {
-                      toast.success(`✅ Backend connected! URL: ${apiUrl}`);
+                      toast.success(`✅ Backend connected! URL: ${cleanUrl}`);
+                      console.log('Backend response:', data);
                     } else {
-                      toast.error(`❌ Invalid response from backend`);
+                      toast.error(`❌ Invalid response from backend: ${JSON.stringify(data)}`);
                     }
                   } catch (error) {
                     const errorMsg = error instanceof Error ? error.message : String(error);
                     toast.error(`❌ Backend failed: ${errorMsg}`);
                     console.error('Backend test error:', error);
+                    console.error('Failed URL:', testUrl);
                   }
                 }}
                 variant="outline"

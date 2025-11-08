@@ -1,7 +1,20 @@
 // Web Push notification subscription and management
 import { getFoods } from "./storage";
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+// Normalize API URL - remove trailing slashes to prevent double slashes
+const getApiUrl = (): string => {
+  const url = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+  return url.replace(/\/+$/, ''); // Remove trailing slashes
+};
+
+const API_URL = getApiUrl();
+
+// Helper to construct API URLs safely (prevents double slashes)
+const apiUrl = (path: string): string => {
+  const base = API_URL.replace(/\/+$/, ''); // Remove trailing slashes from base
+  const cleanPath = path.startsWith('/') ? path : `/${path}`;
+  return `${base}${cleanPath}`;
+};
 
 let vapidPublicKey: string | null = null;
 let subscription: PushSubscription | null = null;
@@ -13,12 +26,31 @@ export const getVapidKey = async (): Promise<string> => {
   }
 
   try {
-    const response = await fetch(`${API_URL}/api/vapid-key`);
+    const url = apiUrl('/api/vapid-key');
+    console.log('Fetching VAPID key from:', url);
+    const response = await fetch(url, {
+      method: 'GET',
+      credentials: 'include', // Include credentials for CORS
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Failed to get VAPID key: ${response.status} ${response.statusText}`);
+    }
+    
     const data = await response.json();
+    
+    if (!data.publicKey) {
+      throw new Error('VAPID key not found in response');
+    }
+    
     vapidPublicKey = data.publicKey;
+    console.log('VAPID key received successfully');
     return vapidPublicKey;
   } catch (error) {
     console.error('Failed to get VAPID key:', error);
+    if (error instanceof TypeError && error.message.includes('Failed to fetch')) {
+      throw new Error(`Cannot reach backend at ${API_URL}. Check CORS configuration and network connection.`);
+    }
     throw error;
   }
 };
@@ -48,7 +80,6 @@ export const subscribeToPush = async (): Promise<PushSubscription | null> => {
     console.log('Service worker ready');
 
     // Get VAPID public key from backend
-    console.log('Fetching VAPID key from:', `${API_URL}/api/vapid-key`);
     const publicKey = await getVapidKey();
     
     if (!publicKey) {
@@ -68,17 +99,19 @@ export const subscribeToPush = async (): Promise<PushSubscription | null> => {
     console.log('Push subscription created:', subscription.endpoint.substring(0, 50) + '...');
 
     // Send subscription to server
-    console.log('Sending subscription to backend:', `${API_URL}/api/subscribe`);
+    const subscribeUrl = apiUrl('/api/subscribe');
+    console.log('Sending subscription to backend:', subscribeUrl);
     
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
     
     try {
-      const response = await fetch(`${API_URL}/api/subscribe`, {
+      const response = await fetch(subscribeUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
+        credentials: 'include', // Include credentials for CORS
         body: JSON.stringify({ subscription }),
         signal: controller.signal,
       });
@@ -150,11 +183,12 @@ export const updateNotificationSchedule = async (
     .slice(0, 5);
 
   try {
-    await fetch(`${API_URL}/api/update-schedule`, {
+    await fetch(apiUrl('/api/update-schedule'), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
+      credentials: 'include', // Include credentials for CORS
       body: JSON.stringify({
         subscription,
         notificationTimes,
@@ -191,11 +225,12 @@ export const sendTestNotification = async (): Promise<boolean> => {
     .slice(0, 5);
 
   try {
-    await fetch(`${API_URL}/api/test-notification`, {
+    await fetch(apiUrl('/api/test-notification'), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
+      credentials: 'include', // Include credentials for CORS
       body: JSON.stringify({
         subscription,
         foods,
@@ -218,11 +253,12 @@ export const unsubscribeFromPush = async (): Promise<boolean> => {
     if (existingSubscription) {
       await existingSubscription.unsubscribe();
       
-      await fetch(`${API_URL}/api/unsubscribe`, {
+      await fetch(apiUrl('/api/unsubscribe'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
+        credentials: 'include', // Include credentials for CORS
         body: JSON.stringify({ subscription: existingSubscription }),
       });
 

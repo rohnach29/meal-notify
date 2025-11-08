@@ -7,13 +7,53 @@ import cron from 'node-cron';
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Middleware
-app.use(cors({
-  origin: true, // Allow all origins (for PWA)
-  credentials: true,
-  methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-}));
+// CORS configuration - explicitly allow frontend origin
+// This is critical for Vercel deployments where redirects can break CORS
+// You can set FRONTEND_URL environment variable to add custom frontend URLs
+const allowedOrigins = [
+  process.env.FRONTEND_URL, // Allow custom frontend URL from environment
+  'https://meal-notify.vercel.app',
+  'https://meal-notify-git-main-*.vercel.app', // Vercel preview deployments
+  'http://localhost:5173',
+  'http://localhost:8080',
+  'http://localhost:3000',
+].filter(Boolean); // Remove undefined values
+
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  
+  // Allow requests with no origin (mobile apps, Postman, etc.)
+  if (!origin) {
+    return next();
+  }
+  
+  // Check if origin is in allowed list
+  const isAllowed = allowedOrigins.some(allowed => {
+    // Support wildcard for Vercel preview URLs
+    if (allowed.includes('*')) {
+      const pattern = allowed.replace('*', '.*');
+      return new RegExp(pattern).test(origin);
+    }
+    return origin === allowed;
+  });
+  
+  // For development, allow all origins
+  if (process.env.NODE_ENV !== 'production' || isAllowed) {
+    res.header('Access-Control-Allow-Origin', origin);
+    res.header('Access-Control-Allow-Credentials', 'true');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, DELETE');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+    res.header('Access-Control-Max-Age', '86400'); // 24 hours
+    
+    // Handle preflight requests
+    if (req.method === 'OPTIONS') {
+      return res.sendStatus(200);
+    }
+  }
+  
+  next();
+});
+
 app.use(express.json());
 
 // VAPID keys - set these as environment variables
@@ -93,6 +133,12 @@ const sendNotification = async (subscription, title, body, foods = []) => {
 
 // Get VAPID public key
 app.get('/api/vapid-key', (req, res) => {
+  // Explicitly set CORS headers for this endpoint (important for redirects)
+  const origin = req.headers.origin;
+  if (origin) {
+    res.header('Access-Control-Allow-Origin', origin);
+    res.header('Access-Control-Allow-Credentials', 'true');
+  }
   res.json({ publicKey: VAPID_PUBLIC_KEY });
 });
 
