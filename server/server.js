@@ -84,36 +84,21 @@ const getRecentFoods = (userId) => {
 
 // Send notification with food actions
 // Returns: { success: true } or throws error with details
+// Note: Service worker creates actions from foods array, so we send foods not actions
 const sendNotification = async (subscription, title, body, foods = []) => {
-  const actions = [];
-  
-  // Add food actions (max 4)
-  if (foods && foods.length > 0) {
-    foods.slice(0, 4).forEach((food) => {
-      actions.push({
-        action: `food-${food.id}`,
-        title: food.name.length > 20 ? food.name.substring(0, 17) + '...' : food.name,
-      });
-    });
-  }
-  
-  // Add view all action
-  actions.push({
-    action: 'view-all',
-    title: 'View All',
-  });
-
+  // Service worker expects 'foods' array in payload and creates actions from it
+  // Don't create actions here - let service worker handle it
   const payload = JSON.stringify({
     title: title || 'Meal Reminder 🍽️',
     body: body || 'Time to log your meal!',
     icon: '/icon-192.png',
     badge: '/icon-192.png',
     tag: 'meal-reminder',
+    foods: foods || [], // Service worker needs this to create action buttons
     data: {
       url: '/log',
-      foods: foods.map(f => f.id),
+      foods: foods ? foods.map(f => f.id) : [], // Keep for backward compatibility
     },
-    actions: actions,
   });
 
   try {
