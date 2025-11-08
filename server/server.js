@@ -83,6 +83,7 @@ const getRecentFoods = (userId) => {
 };
 
 // Send notification with food actions
+// Returns: { success: true } or throws error with details
 const sendNotification = async (subscription, title, body, foods = []) => {
   const actions = [];
   
@@ -117,15 +118,27 @@ const sendNotification = async (subscription, title, body, foods = []) => {
 
   try {
     await webpush.sendNotification(subscription, payload);
-    console.log('Notification sent successfully');
+    return { 
+      success: true, 
+      message: 'Notification sent successfully',
+      endpoint: subscription.endpoint?.substring(0, 50) + '...'
+    };
   } catch (error) {
-    console.error('Error sending notification:', error);
     // Remove invalid subscription
     if (error.statusCode === 410 || error.statusCode === 404) {
       const userId = getUserId(subscription);
       subscriptions.delete(userId);
-      console.log('Removed invalid subscription');
+      console.log('Removed invalid subscription:', userId.substring(0, 20));
     }
+    
+    // Return error details instead of throwing (for diagnostics)
+    return {
+      success: false,
+      error: error.message,
+      statusCode: error.statusCode,
+      endpoint: subscription.endpoint?.substring(0, 50) + '...',
+      body: error.body ? JSON.stringify(error.body).substring(0, 100) : undefined
+    };
   }
 };
 
@@ -227,7 +240,7 @@ app.post('/api/test-notification', async (req, res) => {
   }
 
   try {
-    await sendNotification(
+    const result = await sendNotification(
       subscription,
       'Test Notification',
       foods && foods.length > 0
@@ -235,125 +248,155 @@ app.post('/api/test-notification', async (req, res) => {
         : 'Test notification - no recent foods',
       foods || []
     );
-    res.json({ success: true, message: 'Test notification sent' });
+    
+    if (result.success) {
+      res.json({ success: true, message: 'Test notification sent', details: result });
+    } else {
+      res.status(500).json({ 
+        success: false,
+        error: 'Failed to send notification', 
+        details: result 
+      });
+    }
   } catch (error) {
-    res.status(500).json({ error: 'Failed to send notification' });
+    res.status(500).json({ error: 'Failed to send notification', details: error.message });
   }
 });
 
 // Check and send notifications for current time (within 5-minute window)
-const checkAndSendNotifications = () => {
+// Returns detailed diagnostics in the response instead of just console.log
+const checkAndSendNotifications = async () => {
   const now = new Date();
   const currentHour = now.getHours();
   const currentMinute = now.getMinutes();
   const currentTime = `${String(currentHour).padStart(2, '0')}:${String(currentMinute).padStart(2, '0')}`;
   
-  console.log(`\n[CRON] ===== Checking notifications at ${currentTime} =====`);
-  console.log(`[CRON] Total subscriptions in memory: ${subscriptions.size}`);
-  console.log(`[CRON] Total schedules in memory: ${userSchedules.size}`);
-  
-  // Track what we find
-  const stats = {
-    subscriptionsChecked: 0,
-    subscriptionsWithSchedules: 0,
-    schedulesChecked: 0,
-    notificationsSent: 0,
-    timeMatches: [],
+  // Build detailed diagnostics object (returned in API response)
+  const diagnostics = {
+    timestamp: now.toISOString(),
+    currentTime,
+    currentTimeUTC: `${String(currentHour).padStart(2, '0')}:${String(currentMinute).padStart(2, '0')} UTC`,
+    subscriptionsInMemory: subscriptions.size,
+    schedulesInMemory: userSchedules.size,
+    subscriptions: [],
+    summary: {
+      subscriptionsChecked: 0,
+      subscriptionsWithSchedules: 0,
+      schedulesChecked: 0,
+      timeMatches: 0,
+      notificationsAttempted: 0,
+      notificationsSucceeded: 0,
+      notificationsFailed: 0
+    },
     issues: []
   };
   
   // Check each subscription
   if (subscriptions.size === 0) {
-    console.log(`[CRON] ⚠️  No subscriptions found in memory!`);
-    stats.issues.push('No subscriptions stored - did you enable notifications?');
-    return stats;
+    diagnostics.issues.push('No subscriptions stored - did you enable notifications?');
+    return diagnostics;
   }
   
-  subscriptions.forEach((subscription, userId) => {
-    stats.subscriptionsChecked++;
-    const userIdShort = userId.substring(0, 20) + '...';
-    console.log(`[CRON] Checking subscription ${stats.subscriptionsChecked}: ${userIdShort}`);
+  // Process each subscription
+  for (const [userId, subscription] of subscriptions.entries()) {
+    const userIdShort = userId.substring(0, 30) + '...';
+    diagnostics.summary.subscriptionsChecked++;
+    
+    const subDiagnostic = {
+      userId: userIdShort,
+      endpoint: subscription.endpoint?.substring(0, 50) + '...',
+      hasSchedule: false,
+      scheduleTimes: [],
+      timeChecks: [],
+      notifications: []
+    };
     
     const userData = userSchedules.get(userId);
     
     if (!userData) {
-      console.log(`[CRON]   ⚠️  No schedule data found for this subscription`);
-      stats.issues.push(`Subscription ${stats.subscriptionsChecked} has no schedule`);
-      return;
+      subDiagnostic.issues = ['No schedule data found'];
+      diagnostics.issues.push(`Subscription has no schedule`);
+      diagnostics.subscriptions.push(subDiagnostic);
+      continue;
     }
     
     if (!userData.notificationTimes || userData.notificationTimes.length === 0) {
-      console.log(`[CRON]   ⚠️  No notification times set`);
-      stats.issues.push(`Subscription ${stats.subscriptionsChecked} has no notification times`);
-      return;
+      subDiagnostic.issues = ['No notification times set'];
+      diagnostics.issues.push(`Subscription has no notification times`);
+      diagnostics.subscriptions.push(subDiagnostic);
+      continue;
     }
     
-    stats.subscriptionsWithSchedules++;
-    console.log(`[CRON]   ✅ Has schedule with ${userData.notificationTimes.length} time(s): ${userData.notificationTimes.join(', ')}`);
+    subDiagnostic.hasSchedule = true;
+    subDiagnostic.scheduleTimes = userData.notificationTimes;
+    diagnostics.summary.subscriptionsWithSchedules++;
 
     const foods = userData.foods || [];
     const foodsList = Array.isArray(foods) ? foods.slice(0, 5) : [];
-    console.log(`[CRON]   📦 Foods available: ${foodsList.length}`);
 
     // Check each scheduled time
-    userData.notificationTimes.forEach((scheduledTime) => {
-      stats.schedulesChecked++;
+    for (const scheduledTime of userData.notificationTimes) {
+      diagnostics.summary.schedulesChecked++;
       const [scheduledHour, scheduledMinute] = scheduledTime.split(':').map(Number);
       const scheduledTotalMinutes = scheduledHour * 60 + scheduledMinute;
       const currentTotalMinutes = currentHour * 60 + currentMinute;
-      
-      // Check if current time is within 2 minutes of scheduled time
       const timeDiff = Math.abs(currentTotalMinutes - scheduledTotalMinutes);
       
-      console.log(`[CRON]   🕐 Checking ${scheduledTime}:`);
-      console.log(`[CRON]      Current: ${currentTime} (${currentTotalMinutes} min)`);
-      console.log(`[CRON]      Scheduled: ${scheduledTime} (${scheduledTotalMinutes} min)`);
-      console.log(`[CRON]      Difference: ${timeDiff} minutes`);
+      const timeCheck = {
+        scheduledTime,
+        scheduledTimeUTC: `${String(scheduledHour).padStart(2, '0')}:${String(scheduledMinute).padStart(2, '0')} UTC`,
+        currentTime,
+        currentTimeUTC: `${String(currentHour).padStart(2, '0')}:${String(currentMinute).padStart(2, '0')} UTC`,
+        scheduledMinutes: scheduledTotalMinutes,
+        currentMinutes: currentTotalMinutes,
+        timeDiff,
+        matches: timeDiff <= 2 && timeDiff >= 0
+      };
+      
+      subDiagnostic.timeChecks.push(timeCheck);
       
       if (timeDiff <= 2 && timeDiff >= 0) {
-        console.log(`[CRON]      ✅ MATCH! Within 2-minute window, sending notification...`);
-        stats.timeMatches.push({
-          scheduledTime,
-          currentTime,
-          timeDiff
-        });
-        stats.notificationsSent++;
+        diagnostics.summary.timeMatches++;
+        diagnostics.summary.notificationsAttempted++;
         
         const foodNames = foodsList.length > 0
           ? foodsList.slice(0, 3).map(f => f.name).join(', ') + 
             (foodsList.length > 3 ? ` +${foodsList.length - 3} more` : '')
           : 'Time to log your meal! What did you eat?';
 
-        sendNotification(
+        // Send notification and capture result
+        const result = await sendNotification(
           subscription,
           'Meal Reminder 🍽️',
           `Quick log: ${foodNames}`,
           foodsList
-        ).then(() => {
-          console.log(`[CRON]      ✅ Notification sent successfully`);
-        }).catch((err) => {
-          console.error(`[CRON]      ❌ Failed to send notification:`, err.message);
-          stats.issues.push(`Failed to send notification for ${scheduledTime}: ${err.message}`);
-        });
-      } else {
-        console.log(`[CRON]      ⏭️  Not matching (need diff <= 2 minutes)`);
+        );
+        
+        const notificationResult = {
+          scheduledTime,
+          attempted: true,
+          success: result.success,
+          timestamp: new Date().toISOString(),
+          ...result
+        };
+        
+        subDiagnostic.notifications.push(notificationResult);
+        
+        if (result.success) {
+          diagnostics.summary.notificationsSucceeded++;
+        } else {
+          diagnostics.summary.notificationsFailed++;
+          diagnostics.issues.push(
+            `Notification failed for ${scheduledTime}: ${result.error} (${result.statusCode || 'unknown'})`
+          );
+        }
       }
-    });
-  });
-  
-  console.log(`[CRON] ===== Summary =====`);
-  console.log(`[CRON] Subscriptions checked: ${stats.subscriptionsChecked}`);
-  console.log(`[CRON] Subscriptions with schedules: ${stats.subscriptionsWithSchedules}`);
-  console.log(`[CRON] Schedules checked: ${stats.schedulesChecked}`);
-  console.log(`[CRON] Time matches: ${stats.timeMatches.length}`);
-  console.log(`[CRON] Notifications sent: ${stats.notificationsSent}`);
-  if (stats.issues.length > 0) {
-    console.log(`[CRON] Issues: ${stats.issues.length}`);
-    stats.issues.forEach(issue => console.log(`[CRON]   - ${issue}`));
+    }
+    
+    diagnostics.subscriptions.push(subDiagnostic);
   }
-  console.log(`[CRON] ===================\n`);
   
-  return stats;
+  return diagnostics;
 };
 
 // Diagnostic endpoint - check what's stored in memory
@@ -395,6 +438,7 @@ app.get('/api/debug', (req, res) => {
 
 // Cron endpoint - called by external cron service every 5 minutes
 // Checks all users and sends notifications if their scheduled time matches (within 2-minute window)
+// Returns detailed diagnostics in the response for debugging
 // For security, you can add CRON_SECRET env var and set it in your external cron service
 app.get('/api/cron', async (req, res) => {
   // Optional: Verify cron secret for security
@@ -404,26 +448,19 @@ app.get('/api/cron', async (req, res) => {
   }
 
   try {
-    const stats = checkAndSendNotifications();
-    const now = new Date();
+    const diagnostics = await checkAndSendNotifications();
     res.json({ 
       success: true, 
       message: 'Notifications checked',
-      checkedAt: now.toISOString(),
-      currentTime: `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`,
-      stats: {
-        totalSubscriptions: stats.subscriptionsChecked,
-        totalSchedules: userSchedules.size,
-        subscriptionsWithSchedules: stats.subscriptionsWithSchedules,
-        schedulesChecked: stats.schedulesChecked,
-        timeMatches: stats.timeMatches.length,
-        notificationsSent: stats.notificationsSent,
-        issues: stats.issues
-      }
+      ...diagnostics  // Include all diagnostic information in response
     });
   } catch (error) {
     console.error('Cron error:', error);
-    res.status(500).json({ error: 'Failed to check notifications', details: error.message });
+    res.status(500).json({ 
+      error: 'Failed to check notifications', 
+      details: error.message,
+      stack: process.env.NODE_ENV !== 'production' ? error.stack : undefined
+    });
   }
 });
 
