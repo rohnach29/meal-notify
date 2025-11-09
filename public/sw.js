@@ -207,23 +207,34 @@ async function showNotificationWithActions(foods, title, body) {
   logToClient('  - title:', title);
   logToClient('  - body:', body);
   
+  // Get absolute URL for icons (iOS requires absolute URLs)
+  const iconUrl = self.location.origin + '/icon-192.png';
+  logToClient('Icon URL:', iconUrl);
+  
   const actions = [];
   
-  // Add food actions (max 4 due to notification API limits)
+  // Filter out invalid foods and add food actions (max 4 due to notification API limits)
   if (foods && foods.length > 0) {
     logToClient('✅ Creating actions from foods array');
     logToClient('Foods to process:', foods);
     
-    foods.slice(0, 4).forEach((food, index) => {
-      logToClient(`Processing food ${index + 1}:`, food);
-      if (!food || !food.id || !food.name) {
-        logToClient(`⚠️ Food ${index + 1} is missing id or name:`, food);
-        return;
+    // Filter valid foods (must have id and name, and id must not be empty)
+    const validFoods = foods.filter(food => {
+      const isValid = food && food.id && food.id !== '' && food.name;
+      if (!isValid) {
+        logToClient(`⚠️ Filtered out invalid food:`, food);
       }
+      return isValid;
+    });
+    
+    logToClient(`Valid foods after filtering: ${validFoods.length} out of ${foods.length}`);
+    
+    validFoods.slice(0, 4).forEach((food, index) => {
+      logToClient(`Processing food ${index + 1}:`, food);
       const action = {
         action: `food-${food.id}`,
         title: food.name.length > 20 ? food.name.substring(0, 17) + '...' : food.name,
-        icon: '/icon-192.png'
+        // Don't include icon - iOS Safari doesn't support icons in notification actions
       };
       logToClient(`Created action:`, action);
       actions.push(action);
@@ -234,32 +245,40 @@ async function showNotificationWithActions(foods, title, body) {
     logToClient('This is why no action buttons will appear.');
   }
   
-  // Add view all action
-  actions.push({
-    action: 'view-all',
-    title: 'View All',
-    icon: '/icon-192.png'
-  });
-  logToClient('Added "View All" action');
+  // Add view all action (only if we have food actions)
+  if (actions.length > 0) {
+    actions.push({
+      action: 'view-all',
+      title: 'View All',
+      // Don't include icon - iOS Safari doesn't support icons in notification actions
+    });
+    logToClient('Added "View All" action');
+  }
+  
   logToClient('Total actions:', actions.length);
   logToClient('Actions array:', actions);
   
   const options = {
     body: body || 'Time to log your meal!',
-    icon: '/icon-192.png',
-    badge: '/icon-192.png',
+    icon: iconUrl,  // ✅ Use absolute URL for notification icon
+    badge: iconUrl, // ✅ Use absolute URL for notification badge
     tag: 'meal-reminder',
     requireInteraction: false,
-    actions: actions,
     data: {
       url: '/log',
-      foods: foods ? foods.map(f => f.id) : []
+      foods: foods ? foods.filter(f => f && f.id && f.id !== '').map(f => f.id) : []
     }
   };
   
+  // Only add actions if we have them (iOS might not show notification if actions array is empty or malformed)
+  if (actions.length > 0) {
+    options.actions = actions;
+  }
+  
   logToClient('Notification options:');
   logToClient('  - body:', options.body);
-  logToClient('  - actions count:', options.actions.length);
+  logToClient('  - icon:', options.icon);
+  logToClient('  - actions count:', options.actions ? options.actions.length : 0);
   logToClient('  - actions:', options.actions);
   logToClient('  - data.foods:', options.data.foods);
   
