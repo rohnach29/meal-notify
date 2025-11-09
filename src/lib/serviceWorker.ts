@@ -152,6 +152,10 @@ export const setupServiceWorkerMessageListener = (
       onLogFood(event.data.foodId);
     } else if (event.data.type === "OPEN_LOG_PAGE") {
       onOpenLogPage();
+    } else if (event.data.type === "SW_LOG") {
+      // Log service worker messages to main console
+      // This allows us to see service worker logs in Safari Web Inspector
+      console.log('[SW]', ...event.data.logs);
     }
   });
 };
